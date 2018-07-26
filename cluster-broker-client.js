@@ -174,6 +174,7 @@ ClusterBrokerClient.prototype.subscribe = function (channelName) {
   } else {
     var err = this.errors.NoMatchingSubscribeTargetError(channelName);
     this.emit('error', err);
+    return err;
   }
 };
 
@@ -196,6 +197,7 @@ ClusterBrokerClient.prototype.publish = function (channelName, data) {
   } else {
     var err = this.errors.NoMatchingPublishTargetError(channelName);
     this.emit('error', err);
+    return err;
   }
 };
 

@@ -105,11 +105,13 @@ module.exports.attach = function (broker, options) {
   };
   clusterClient.on('message', clusterMessageHandler);
 
-  broker.on('subscribe', (channelName) => {
-    clusterClient.subscribe(channelName);
-  });
   broker.on('unsubscribe', (channelName) => {
     clusterClient.unsubscribe(channelName);
+  });
+
+  broker.addMiddleware(broker.MIDDLEWARE_SUBSCRIBE, function(req, next) {
+    var err = clusterClient.subscribe(req.channel);
+    next(err);
   });
 
   var publishOutboundBuffer = {};
@@ -119,14 +121,39 @@ module.exports.attach = function (broker, options) {
     Object.keys(publishOutboundBuffer).forEach((channelName) => {
       var packet = {
         sender: broker.instanceId || null,
-        messages: publishOutboundBuffer[channelName],
+        messages: publishOutboundBuffer[channelName].messages,
       };
-      clusterClient.publish(channelName, packet);
+
+      var err = clusterClient.publish(channelName, packet);
+      publishOutboundBuffer[channelName].callbacks.forEach((callback) => callback(err));
     });
 
     publishOutboundBuffer = {};
     publishTimeout = null;
   };
+
+  broker.addMiddleware(broker.MIDDLEWARE_PUBLISH_IN, function(req, next) {
+    var channelName = req.channel;
+    var data = req.command.value;
+    if (broker.options.pubSubBatchDuration == null) {
+      var packet = {
+        sender: broker.instanceId || null,
+        messages: [req.command.value],
+      };
+      var err = clusterClient.publish(channelName, packet);
+      next(err);
+    } else {
+      if (!publishOutboundBuffer[channelName]) {
+        publishOutboundBuffer[channelName] = { callbacks: [], messages: [] };
+      }
+      publishOutboundBuffer[channelName].messages.push(data);
+      publishOutboundBuffer[channelName].callbacks.push(next);
+
+      if (!publishTimeout) {
+        publishTimeout = setTimeout(flushPublishOutboundBuffer, broker.options.pubSubBatchDuration);
+      }
+    }
+  });
 
   broker.on('publish', (channelName, data) => {
     if (broker.options.pubSubBatchDuration == null) {
